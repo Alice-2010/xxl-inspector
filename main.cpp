@@ -1,4 +1,4 @@
-// XXL Inspector: Memory watcher and editor for Asterix XXL 1, 2 and OG
+// XXL Inspector: Memory watcher and editor for Asterix XXL 1, 2, OG and Alice
 // By AdrienTD
 
 #include "global.h"
@@ -58,11 +58,33 @@ naked void jmp_47A274()
 
 typedef LRESULT (CALLBACK *ftWndProc)(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
+LRESULT __stdcall hookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+#if XXLVER == 6
+// Alice is SecuROM-packed: code patches at PE entry are too early.
+// Subclass the game window once D3D is created (post-unpack).
+static WNDPROC g_aliceOrigWndProc = nullptr;
+HWND g_aliceHwnd = nullptr;
+
+void AliceOnDeviceCreated(HWND hwnd)
+{
+	if(!hwnd || g_aliceOrigWndProc)
+		return;
+	g_aliceHwnd = hwnd;
+	g_aliceOrigWndProc = (WNDPROC)SetWindowLongA(hwnd, GWL_WNDPROC, (LONG)hookWndProc);
+	MessageBoxA(hwnd, "XXL Inspector for " XXLNAME " enabled!", title, MB_OK | MB_ICONINFORMATION);
+}
+#endif
+
 LRESULT __stdcall hookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
 	LRESULT lr;
 	lr = IGWndProc(hWnd, uMsg, wParam, lParam);
+#if XXLVER == 6
+	return CallWindowProcA(g_aliceOrigWndProc, hWnd, uMsg, wParam, lParam);
+#else
 	return ((ftWndProc)axWndProc)(hWnd, uMsg, wParam, lParam); // XXL1
+#endif
 }
 
 #if XXLVER >= 2
@@ -651,7 +673,9 @@ void PatchStart_XXL()
 
 	// Remove cursor from window class
 	memcpy((void*)0x4DB3B3, "\x83\xC4\x08\x31\xC0\x90", 6); // add esp, 8 \ xor eax, eax
-
+#elif XXLVER == 6
+	// Unreachable for Alice (no entry-point hook). Kept for consistency.
+	gameStartInfo = (SGameStartInfo*)0x85CF28;
 #endif
 }
 
@@ -722,12 +746,19 @@ naked void EntryPointInterception()
 
 BOOL WINAPI DllMain(HINSTANCE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
 {
-	char *mz, *pe;
 	if(fdwReason == DLL_PROCESS_ATTACH)
 	{
 		// Obtain base address
 		exehi = GetModuleHandle(0);
 		exeRebase = (uint32_t)exehi - 0x400000;
+
+#if XXLVER == 6
+		// Alice.exe is SecuROM-packed. Do not touch the PE entry or .bind —
+		// any early code patch breaks the unpacker. Init is deferred until
+		// Direct3DCreate9/CreateDevice (see AliceOnDeviceCreated).
+		gameStartInfo = (SGameStartInfo*)0x85CF28;
+#else
+		char *mz, *pe;
 
 		// Make the .text section writable.
 		SetMemProtection((void*)(0x401000 + exeRebase), PAGE_EXECUTE_READWRITE);
@@ -744,6 +775,7 @@ BOOL WINAPI DllMain(HINSTANCE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
 
 		// Put a jump to our function at the beginning of the entry point code.
 		SetImmediateJump(exeep, (uint)EntryPointInterception);
+#endif
 	}
 	return TRUE;
 }
