@@ -35,6 +35,11 @@ void IGInit()
 #endif
 	ImGui_ImplDX9_Init(gamed3ddev);
 #endif
+#if XXLVER == 6
+	// Alice hides the Windows cursor while the game is running. Make it
+	// visible once the inspector GUI is initialized.
+	while(ShowCursor(TRUE) < 0) {}
+#endif
 	ImGui::StyleColorsClassic();
 }
 
