@@ -37,7 +37,7 @@ Visual C++ 2017 or later is required.
 
 Copy the resulting file `d3d9.dll` (or `opengl32.dll` for Remasters) to the game's folder (where the executable or `GameModule.elb` file is), and run the game.
 
-For Alice in Wonderland, launch the game through Steam (direct `Alice.exe` launch will fail with SecuROM).
+For Alice in Wonderland, launch the game through Steam.
 
 It is recommended to run the game in windowed mode.
 

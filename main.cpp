@@ -66,6 +66,103 @@ LRESULT __stdcall hookWndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam
 static WNDPROC g_aliceOrigWndProc = nullptr;
 HWND g_aliceHwnd = nullptr;
 
+// The decrypted Alice image runs these static CRegisterClass constructors
+// from the CRT initializer table, before WinMain. Hook after the constructor's
+// one-time module setup and before its factory registration call.
+static BYTE *g_aliceRegisterClassTrampoline = nullptr;
+
+naked void jmp_AliceRegisterClass()
+{
+	__asm {
+		pushad
+		mov eax, [esp+40] // classType (first CRegisterClass argument)
+		mov ecx, [esp+44] // classID
+		mov edx, [esp+68] // className (eighth argument)
+		push edx
+		push 0
+		push 0
+		push 0
+		push 0
+		push 0
+		push ecx
+		push eax
+		push 0 // caller (unused by onKalClassInit)
+		push esi // constructor this pointer
+		call onKalClassInit
+		popad
+		jmp dword ptr [g_aliceRegisterClassTrampoline]
+	}
+}
+
+static bool HookAliceRegisterClass()
+{
+	BYTE *target = (BYTE*)(0x5507C8 + exeRebase);
+	static const BYTE expected[] = { 0x8B, 0x54, 0x24, 0x20, 0x8B, 0x0D };
+	const SIZE_T patchLength = 10;
+	DWORD oldProtect, unused;
+
+	// The hook must be installed before the CRT runs its static class
+	// registrations. Only patch the decrypted code image we analyzed.
+	if(memcmp(target, expected, sizeof(expected)) != 0 ||
+		*(uint*)(target + 6) != 0x85CF20 + exeRebase)
+		return false;
+
+	g_aliceRegisterClassTrampoline = (BYTE*)VirtualAlloc(0, patchLength + 5,
+		MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
+	if(!g_aliceRegisterClassTrampoline)
+		return false;
+
+	memcpy(g_aliceRegisterClassTrampoline, target, patchLength);
+	g_aliceRegisterClassTrampoline[patchLength] = 0xE9;
+	*(uint*)(g_aliceRegisterClassTrampoline + patchLength + 1) =
+		(uint)(target + patchLength) - (uint)(g_aliceRegisterClassTrampoline + patchLength + 5);
+
+	if(!VirtualProtect(target, patchLength, PAGE_EXECUTE_READWRITE, &oldProtect)) {
+		VirtualFree(g_aliceRegisterClassTrampoline, 0, MEM_RELEASE);
+		g_aliceRegisterClassTrampoline = nullptr;
+		return false;
+	}
+
+	SetImmediateJump(target, (uint)jmp_AliceRegisterClass);
+	memset(target + 5, 0x90, patchLength - 5);
+	FlushInstructionCache(GetCurrentProcess(), target, patchLength);
+	VirtualProtect(target, patchLength, oldProtect, &unused);
+	VirtualProtect(g_aliceRegisterClassTrampoline, patchLength + 5, PAGE_EXECUTE_READ, &unused);
+	return true;
+}
+
+static BOOL (WINAPI *g_aliceOriginalGetVersionExA)(LPOSVERSIONINFOA) = nullptr;
+
+static BOOL WINAPI AliceGetVersionExA(LPOSVERSIONINFOA versionInfo)
+{
+	BOOL result = g_aliceOriginalGetVersionExA(versionInfo);
+	if(result)
+		HookAliceRegisterClass();
+	return result;
+}
+
+static bool HookAliceStartupApi()
+{
+	// The CRT entry calls GetVersionExA after SecuROM has decrypted .text and
+	// before __cinit dispatches the CRegisterClass static initializers.
+	FARPROC *iat = (FARPROC*)(0x760104 + exeRebase);
+	FARPROC expected = GetProcAddress(GetModuleHandleA("kernel32.dll"), "GetVersionExA");
+	DWORD oldProtect, unused;
+
+	if(!iat || !expected || *iat != expected)
+		return false;
+
+	g_aliceOriginalGetVersionExA = (BOOL (WINAPI *)(LPOSVERSIONINFOA))*iat;
+	if(!VirtualProtect(iat, sizeof(*iat), PAGE_READWRITE, &oldProtect)) {
+		g_aliceOriginalGetVersionExA = nullptr;
+		return false;
+	}
+	*iat = (FARPROC)AliceGetVersionExA;
+	FlushInstructionCache(GetCurrentProcess(), iat, sizeof(*iat));
+	VirtualProtect(iat, sizeof(*iat), oldProtect, &unused);
+	return true;
+}
+
 void AliceOnDeviceCreated(HWND hwnd)
 {
 	if(!hwnd || g_aliceOrigWndProc)
@@ -753,9 +850,9 @@ BOOL WINAPI DllMain(HINSTANCE hinstDll, DWORD fdwReason, LPVOID lpvReserved)
 		exeRebase = (uint32_t)exehi - 0x400000;
 
 #if XXLVER == 6
-		// Alice.exe is SecuROM-packed. Do not touch the PE entry or .bind —
-		// any early code patch breaks the unpacker. Init is deferred until
-		// Direct3DCreate9/CreateDevice (see AliceOnDeviceCreated).
+		// Defer the .text hook until SecuROM has unpacked the code. The hooked
+		// CRT startup API runs before the static class registrations.
+		HookAliceStartupApi();
 		gameStartInfo = (SGameStartInfo*)0x85CF28;
 #else
 		char *mz, *pe;
