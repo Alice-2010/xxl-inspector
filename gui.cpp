@@ -152,7 +152,11 @@ void IGCheats()
 	if(*(int*)((char*)yellowPages->gameManager + m_CKGameManager_currentLevel) == -1) return;
 	ImGui::Begin("Cheats", &showCheats);
 
+#if XXLVER == 6
+    void *tim = yellowPages->timeManager;
+#else
 	void *tim = *(void**)((char*)yellowPages->gameLoop + 8);
+#endif
 	ImGui::DragFloat("Game speed", (float*)((char*)tim + m_CKTimeManager_time), 0.1f);
 
 #if XXLVER == 1
@@ -898,7 +902,11 @@ if(showMainWindow)
 	ImGui::Text("Yellow Pages: %p", yellowPages); ImGui::SameLine();
 	if(ImGui::SmallButton("Go##YP"))
 		g_clfndres = yellowPages;
-	void *tim = *(void**)((char*)yellowPages->gameLoop + 8);
+#if XXLVER == 6
+	void *tim = yellowPages->timeManager;
+#else
+    void *tim = *(void**)((char*)yellowPages->gameLoop + 8);
+#endif
 	ImGui::Text("Timer object: %p", tim); ImGui::SameLine();
 	if(ImGui::SmallButton("Go##TO"))
 		g_clfndres = tim;

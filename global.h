@@ -188,7 +188,7 @@ struct CKYellowPages {
 	void *p_20,*p_24,*p_28,*p_2C;
 	void *gameLoop,*p_34,*p_38,*p_3C;
 	void *b;
-	void *p_40; CKLoadingManager* loadingManager; void*p_48,*p_4C;
+	void *timeManager; CKLoadingManager* loadingManager; void*p_48,*p_4C;
 	void *p_50,*p_54,*p_58,*p_5C;
 	void *p_60,*p_64,*p_68,*p_6C;
 	void *p_70,*p_74;
