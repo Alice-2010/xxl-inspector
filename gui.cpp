@@ -82,6 +82,60 @@ uint GetNumLvlClassInstances(uint clgrp, uint clid)
 	return cl->count;
 }
 
+static bool IsLiveObjectPointer(KClass *candidate)
+{
+	if(!candidate || !yellowPages || !yellowPages->loadingManager || !yellowPages->gameManager)
+		return false;
+
+	CKLoadingManager *lm = yellowPages->loadingManager;
+	if(*(int*)((char*)yellowPages->gameManager + m_CKGameManager_currentLevel) == -1)
+		return false;
+#if XXLVER >= 2
+	if(lm->gameObjects && lm->numGameObjects <= 100000) {
+		for(uint i = 0; i < lm->numGameObjects; i++)
+			if(lm->gameObjects[i] == candidate)
+				return true;
+	}
+#endif
+
+	if(!yellowPages->kclInfos)
+		return false;
+
+	void *kcls = *(void**)((char*)lm + 4);
+	if(!kcls)
+		return false;
+
+	for(int group = 0; group < 15; group++) {
+		uint numClasses = yellowPages->kclInfos->cls[group].numElements;
+		if(numClasses > 4096)
+			continue;
+		void *groupClasses = *(void**)((char*)kcls + 12*group);
+		if(!groupClasses)
+			continue;
+
+		for(uint classID = 0; classID < numClasses; classID++) {
+			ClassContainer *cl = (ClassContainer*)groupClasses + classID;
+			if(!cl->count || !cl->objects)
+				continue;
+
+			if(cl->pl) {
+				for(uint i = 0; i < cl->count; i++)
+					if((KClass*)((char*)cl->objects + (size_t)cl->clSize*i) == candidate)
+						return true;
+			} else if((cl->flags >> 17) == 1) {
+				if((KClass*)cl->objects == candidate)
+					return true;
+			} else {
+				KClass **objects = (KClass**)cl->objects;
+				for(uint i = 0; i < cl->count; i++)
+					if(objects[i] == candidate)
+						return true;
+			}
+		}
+	}
+	return false;
+}
+
 const char * getObjectName(KClass *obj)
 {
 	const char *name = lvlObjectNames[yellowPages->loadingManager->currentSector][obj];
@@ -513,6 +567,8 @@ void IGSelectedObject()
 {
 	if(!showSelectedObject) return;
 	ImGui::Begin("Selected Object", &showSelectedObject);
+	if(selectedObject && !IsLiveObjectPointer(selectedObject))
+		selectedObject = nullptr;
 	if(!selectedObject)
 		ImGui::Text("No object selected!\nPlease select one in the Scene Tree, Level Tree or Hook Tree.");
 	else {
